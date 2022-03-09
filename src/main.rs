@@ -10,6 +10,12 @@ enum Status {
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    #[clap(long)]
+    hook_url: String,
+
+    #[clap(long)]
+    channel: String,
+
     #[clap(long, arg_enum)]
     status: Status,
 
@@ -23,22 +29,19 @@ struct Args {
     user: String,
 
     #[clap(long)]
+    version: String,
+
+    #[clap(long)]
     build_number: usize,
 
     #[clap(long)]
     build_url: String,
 
     #[clap(long)]
-    git_commit: String,
+    git_commit: Option<String>,
 
     #[clap(long)]
-    git_message: String,
-
-    #[clap(long)]
-    hook_url: String,
-
-    #[clap(long)]
-    channel: String,
+    git_message: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -96,8 +99,8 @@ struct TextEntry {
     text: String,
 }
 
-fn get_header(args: &Args) -> String {
-    match args.status {
+fn get_header(args: &Args) -> Block {
+    Block::text(match args.status {
         Status::Success => format!(
             ":white_check_mark: Deployment of *{}* to *{}* successful.",
             args.service, args.environment
@@ -106,19 +109,26 @@ fn get_header(args: &Args) -> String {
             ":no_entry: Deployment of *{}* to *{}* failed.",
             args.service, args.environment
         ),
+    })
+}
+
+fn get_build_info(args: &Args) -> Block {
+    let version = format!("*Version:*\n{}", args.version);
+    let build_url = format!("*Build:*\n<{}|{}>", args.build_url, args.build_number);
+    let triggerer = format!("*Triggered by:*\n{}", args.user);
+
+    Block::fields(&[version, build_url, triggerer])
+}
+
+fn get_git_info(args: &Args) -> Option<Block> {
+    if let (Some(commit), Some(message)) = (&args.git_commit, &args.git_message) {
+        Some(Block::text(format!(
+            "```Commit: {}\n{}```",
+            commit, message
+        )))
+    } else {
+        None
     }
-}
-
-fn get_build(args: &Args) -> String {
-    format!("*Build:*\n<{}|{}>", args.build_url, args.build_number)
-}
-
-fn get_triggerer(args: &Args) -> String {
-    format!("*Triggered by:*\n{}", args.user)
-}
-
-fn get_git_info(args: &Args) -> String {
-    format!("```Commit: {}\n{}```", args.git_commit, args.git_message)
 }
 
 fn main() {
@@ -130,11 +140,12 @@ fn main() {
         blocks: Vec::new(),
     };
 
-    message.blocks.push(Block::text(get_header(&args)));
-    message
-        .blocks
-        .push(Block::fields(&[get_build(&args), get_triggerer(&args)]));
-    message.blocks.push(Block::text(get_git_info(&args)));
+    message.blocks.push(get_header(&args));
+    message.blocks.push(get_build_info(&args));
+
+    if let Some(git_block) = get_git_info(&args) {
+        message.blocks.push(git_block);
+    }
 
     let resp = ureq::post(&args.hook_url)
         .set("Content-Type", "application/json")
